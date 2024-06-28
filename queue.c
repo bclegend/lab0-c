@@ -204,14 +204,189 @@ void q_reverse(struct list_head *head)
     head->prev = safe;
 }
 
-/* Reverse the nodes of the list k at a time */
-void q_reverseK(struct list_head *head, int k)
+
+
+/* List merge and sort*/
+struct list_head *mlist(struct list_head *list1, struct list_head *list2)
 {
-    // https://leetcode.com/problems/reverse-nodes-in-k-group/
+    struct list_head *head = NULL;
+    struct list_head **ptr = &head;
+    for (struct list_head **node = NULL; list1 && list2;
+         *node = (*node)->next) {
+        element_t *el1 = list_entry(list1, element_t, list);
+        element_t *el2 = list_entry(list2, element_t, list);
+        node = strcmp(el1->value, el2->value) < 0 ? &list1 : &list2;
+        *ptr = *node;
+        ptr = &(*ptr)->next;
+    }
+    *ptr = (struct list_head *) ((size_t) list1 | (size_t) list2);
+    return head;
 }
 
+struct list_head *msort(struct list_head *head)
+{
+    if (!head || !head->next)
+        return head;
+
+    struct list_head *fast = head, *slow = head;
+    while (fast && fast->next) {
+        fast = fast->next->next;
+        slow = slow->next;
+    }
+
+    struct list_head *mid = slow;
+    slow->prev->next = NULL;
+
+    struct list_head *left = msort(head);
+    struct list_head *right = msort(mid);
+    return mlist(left, right);
+}
+
+void restructure_list(struct list_head *head)
+{
+    struct list_head *curr = head, *next = curr->next;
+    while (next) {
+        next->prev = curr;
+        curr = next;
+        next = next->next;
+    }
+    curr->next = head;
+    head->prev = curr;
+}
+
+
+
+/* linux kernel list sort */
+typedef int (*list_cmp_func_t)(const struct list_head *,
+                               const struct list_head *);
+
+static int cmpfunc(const struct list_head *a, const struct list_head *b)
+{
+    element_t *ela = list_entry(a, element_t, list);
+    element_t *elb = list_entry(b, element_t, list);
+    return strcmp(ela->value, elb->value);
+}
+
+static struct list_head *merge(list_cmp_func_t cmp,
+                               struct list_head *a,
+                               struct list_head *b)
+{
+    struct list_head *head = NULL, **tail = &head;
+
+    for (;;) {
+        if (cmp(a, b) <= 0) {
+            *tail = a;
+            tail = &a->next;
+            a = a->next;
+            if (!a) {
+                *tail = b;
+                break;
+            }
+        } else {
+            *tail = b;
+            tail = &b->next;
+            b = b->next;
+            if (!b) {
+                *tail = a;
+                break;
+            }
+        }
+    }
+    return head;
+}
+
+static void merge_final(list_cmp_func_t cmp,
+                        struct list_head *head,
+                        struct list_head *a,
+                        struct list_head *b)
+{
+    struct list_head *tail = head;
+    unsigned char count = 0;
+    for (;;) {
+        if (cmp(a, b) <= 0) {
+            tail->next = a;
+            a->prev = tail;
+            tail = a;
+            a = a->next;
+            if (!a)
+                break;
+        } else {
+            tail->next = b;
+            b->prev = tail;
+            tail = b;
+            b = b->next;
+            if (!b) {
+                b = a;
+                break;
+            }
+        }
+    }
+
+    tail->next = b;
+    do {
+        if (__glibc_unlikely(!++count))
+            cmp(b, b);
+        b->prev = tail;
+        tail = b;
+        b = b->next;
+    } while (b);
+
+    tail->next = head;
+    head->prev = tail;
+}
+
+void list_sort(struct list_head *head, list_cmp_func_t cmp)
+{
+    struct list_head *list = head->next, *pending = NULL;
+    size_t count = 0; /* Count of pending */
+
+    if (list == head->prev)
+        return;
+
+    head->prev->next = NULL;
+
+    do {
+        size_t bits;
+        struct list_head **tail = &pending;
+        for (bits = count; bits & 1; bits >>= 1)
+            tail = &(*tail)->prev;
+
+        if (__glibc_likely(bits)) {
+            struct list_head *a = *tail, *b = a->prev;
+
+            a = merge(cmp, b, a);
+            a->prev = b->prev;
+            *tail = a;
+        }
+
+        list->prev = pending;
+        pending = list;
+        list = list->next;
+        pending->next = NULL;
+        count++;
+    } while (list);
+
+    list = pending;
+    pending = pending->prev;
+    for (;;) {
+        struct list_head *next = pending->prev;
+        if (!next)
+            break;
+        list = merge(cmp, pending, list);
+        pending = next;
+    }
+    merge_final(cmp, head, pending, list);
+}
+
+
 /* Sort elements of queue in ascending/descending order */
-void q_sort(struct list_head *head, bool descend) {}
+void q_sort(struct list_head *head, bool descend)
+{
+    list_sort(head, cmpfunc);
+
+    if (descend)
+        q_reverse(head);
+}
 
 /* Remove every node which has a node with a strictly less value anywhere to
  * the right side of it */
